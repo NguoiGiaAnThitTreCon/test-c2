@@ -27,6 +27,24 @@
     {
       "ts": 1756807124,
       "type": "pause"
+    },
+    {
+      "ts": 1756807584,
+      "type": "stop_all",
+      "agent": "all",
+      "cmd": "__STOP__"
+    },
+    {
+      "ts": 1756807607,
+      "type": "attack",
+      "agent": "all",
+      "cmd": "bash ./run.sh 123"
+    },
+    {
+      "ts": 1756807619,
+      "type": "attack",
+      "agent": "all",
+      "cmd": "bash ./run.sh 123"
     }
   ]
 }
