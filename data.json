@@ -1,0 +1,32 @@
+{
+  "meta": {
+    "paused": true
+  },
+  "agents": {},
+  "logs": [
+    {
+      "ts": 1756805333,
+      "type": "stop_all",
+      "agent": "all",
+      "cmd": "__STOP__"
+    },
+    {
+      "ts": 1756807108,
+      "type": "stop_all",
+      "agent": "all",
+      "cmd": "__STOP__"
+    },
+    {
+      "ts": 1756807121,
+      "type": "resume"
+    },
+    {
+      "ts": 1756807122,
+      "type": "pause"
+    },
+    {
+      "ts": 1756807124,
+      "type": "pause"
+    }
+  ]
+}
