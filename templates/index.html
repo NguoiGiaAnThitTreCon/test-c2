@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>C2 Command Center</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Consolas', 'Monaco', monospace;
+            background: linear-gradient(135deg, #0f0f0f 0%, #1a1a2e 100%);
+            color: #00ff00;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: rgba(0, 255, 0, 0.05);
+            border: 1px solid #00ff00;
+            border-radius: 10px;
+            box-shadow: 0 0 20px rgba(0, 255, 0, 0.3);
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            text-shadow: 0 0 10px #00ff00;
+            margin-bottom: 10px;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .panel {
+            background: rgba(0, 0, 0, 0.7);
+            border: 1px solid #00ff00;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 0 15px rgba(0, 255, 0, 0.2);
+        }
+
+        .panel h2 {
+            color: #00ff00;
+            margin-bottom: 15px;
+            font-size: 1.3em;
+            text-shadow: 0 0 5px #00ff00;
+        }
+
+        .agents-list {
+            min-height: 200px;
+        }
+
+        .agent-item {
+            background: rgba(0, 255, 0, 0.1);
+            border: 1px solid #00ff00;
+            border-radius: 5px;
+            padding: 15px;
+            margin: 10px 0;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .agent-item:hover {
+            background: rgba(0, 255, 0, 0.2);
+            box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+        }
+
+        .agent-item.selected {
+            background: rgba(0, 255, 0, 0.3);
+            box-shadow: 0 0 15px rgba(0, 255, 0, 0.7);
+        }
+
+        .agent-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .status-online {
+            color: #00ff00;
+            font-weight: bold;
+        }
+
+        .command-form {
+            margin-bottom: 20px;
+        }
+
+        .input-group {
+            margin: 10px 0;
+        }
+
+        .input-group label {
+            display: block;
+            margin-bottom: 5px;
+            color: #00ff00;
+        }
+
+        .command-input {
+            width: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            border: 1px solid #00ff00;
+            border-radius: 5px;
+            padding: 12px;
+            color: #00ff00;
+            font-family: 'Consolas', monospace;
+            font-size: 14px;
+        }
+
+        .command-input:focus {
+            outline: none;
+            box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+        }
+
+        .btn {
+            background: transparent;
+            border: 2px solid #00ff00;
+            color: #00ff00;
+            padding: 12px 25px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-family: 'Consolas', monospace;
+            font-weight: bold;
+            transition: all 0.3s ease;
+            margin: 5px;
+        }
+
+        .btn:hover {
+            background: rgba(0, 255, 0, 0.2);
+            box-shadow: 0 0 15px rgba(0, 255, 0, 0.5);
+        }
+
+        .btn-danger {
+            border-color: #ff0040;
+            color: #ff0040;
+        }
+
+        .btn-danger:hover {
+            background: rgba(255, 0, 64, 0.2);
+            box-shadow: 0 0 15px rgba(255, 0, 64, 0.5);
+        }
+
+        .results-panel {
+            grid-column: 1 / -1;
+            max-height: 500px;
+            overflow-y: auto;
+        }
+
+        .command-result {
+            background: rgba(0, 0, 0, 0.5);
+            border-left: 4px solid #00ff00;
+            margin: 10px 0;
+            padding: 15px;
+            border-radius: 0 5px 5px 0;
+        }
+
+        .command-result.failed {
+            border-left-color: #ff0040;
+        }
+
+        .command-result.running {
+            border-left-color: #ffaa00;
+        }
+
+        .result-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            font-weight: bold;
+        }
+
+        .result-output {
+            background: rgba(0, 0, 0, 0.8);
+            border: 1px solid #333;
+            border-radius: 5px;
+            padding: 10px;
+            white-space: pre-wrap;
+            font-family: 'Consolas', monospace;
+            font-size: 13px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .status-badge {
+            padding: 4px 8px;
+            border-radius: 3px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .status-pending { background: #ffaa00; color: #000; }
+        .status-running { background: #0066ff; color: #fff; }
+        .status-completed { background: #00ff00; color: #000; }
+        .status-failed { background: #ff0040; color: #fff; }
+
+        .no-agent-selected {
+            text-align: center;
+            color: #ff6600;
+            padding: 20px;
+            font-style: italic;
+        }
+
+        .loading {
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 0.5; }
+            50% { opacity: 1; }
+            100% { opacity: 0.5; }
+        }
+
+        .quick-commands {
+            display: flex;
+            gap: 10px;
+            margin: 10px 0;
+            flex-wrap: wrap;
+        }
+
+        .btn-small {
+            padding: 8px 15px;
+            font-size: 12px;
+        }
+
+        @media (max-width: 768px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .quick-commands {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>⚡ C2 Command Center ⚡</h1>
+            <p>Remote Command & Control Interface</p>
+        </div>
+
+        <div class="grid">
+            <div class="panel">
+                <h2>🎯 Connected Agents</h2>
+                <div id="agentsList" class="agents-list loading">
+                    <p style="text-align: center; color: #666;">Đang tải agents...</p>
+                </div>
+            </div>
+
+            <div class="panel">
+                <h2>💻 Command Panel</h2>
+                <div id="commandPanel">
+                    <div class="no-agent-selected">
+                        Chọn một agent để bắt đầu điều khiển
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel results-panel">
+            <h2>📋 Command History & Results</h2>
+            <div style="margin-bottom: 15px;">
+                <button class="btn btn-small" onclick="refreshResults()">🔄 Refresh</button>
+                <button class="btn btn-danger btn-small" onclick="clearHistory()">🗑️ Clear History</button>
+            </div>
+            <div id="resultsContainer">
+                <p style="text-align: center; color: #666;">Chưa có lệnh nào được thực thi</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let selectedAgent = null;
+        let refreshInterval = null;
+
+        // Khởi động
+        document.addEventListener('DOMContentLoaded', function() {
+            refreshAgents();
+            refreshResults();
+            
+            // Auto refresh mỗi 3 giây
+            refreshInterval = setInterval(() => {
+                refreshAgents();
+                refreshResults();
+            }, 3000);
+        });
+
+        function refreshAgents() {
+            fetch('/api/agents')
+                .then(response => response.json())
+                .then(agents => {
+                    const container = document.getElementById('agentsList');
+                    
+                    if (Object.keys(agents).length === 0) {
+                        container.innerHTML = '<p style="text-align: center; color: #666;">Không có agent nào kết nối</p>';
+                        return;
+                    }
+
+                    let html = '';
+                    for (const [agentId, agent] of Object.entries(agents)) {
+                        const isSelected = selectedAgent === agentId;
+                        const lastSeen = Math.round((Date.now() - agent.last_seen * 1000) / 1000);
+                        
+                        html += `
+                            <div class="agent-item ${isSelected ? 'selected' : ''}" 
+                                 onclick="selectAgent('${agentId}')">
+                                <div class="agent-info">
+                                    <div>
+                                        <strong>🖥️ ${agent.hostname}</strong><br>
+                                        <small>📱 ${agent.platform}</small><br>
+                                        <small>🆔 ${agentId.slice(0, 8)}...</small>
+                                    </div>
+                                    <div>
+                                        <div class="status-online">● ONLINE</div>
+                                        <small>⏱️ ${lastSeen}s ago</small>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    }
+                    
+                    container.innerHTML = html;
+                })
+                .catch(error => {
+                    console.error('Error loading agents:', error);
+                    document.getElementById('agentsList').innerHTML = 
+                        '<p style="color: #ff0040;">❌ Lỗi kết nối server</p>';
+                });
+        }
+
+        function selectAgent(agentId) {
+            selectedAgent = agentId;
+            refreshAgents(); // Cập nhật UI selection
+            
+            // Hiển thị command panel
+            document.getElementById('commandPanel').innerHTML = `
+                <div class="command-form">
+                    <div class="input-group">
+                        <label>💻 Command to Execute:</label>
+                        <input type="text" id="commandInput" class="command-input" 
+                               placeholder="Nhập lệnh... (VD: ls -la, ps aux, bash ./run.sh)"
+                               onkeypress="handleEnterKey(event)">
+                    </div>
+                    
+                    <div class="quick-commands">
+                        <button class="btn btn-small" onclick="setCommand('ls -la')">📁 ls -la</button>
+                        <button class="btn btn-small" onclick="setCommand('ps aux')">📊 ps aux</button>
+                        <button class="btn btn-small" onclick="setCommand('pwd')">📍 pwd</button>
+                        <button class="btn btn-small" onclick="setCommand('whoami')">👤 whoami</button>
+                        <button class="btn btn-small" onclick="setCommand('df -h')">💾 df -h</button>
+                    </div>
+                    
+                    <div style="margin-top: 15px;">
+                        <button class="btn" onclick="executeCommand()">🚀 Execute Command</button>
+                        <button class="btn btn-danger" onclick="killAllProcesses()">⛔ Kill All Processes</button>
+                    </div>
+                </div>
+                
+                <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #333;">
+                    <p style="color: #666; font-size: 12px;">
+                        🎯 Selected Agent: <strong style="color: #00ff00;">${agentId.slice(0, 8)}...</strong>
+                    </p>
+                </div>
+            `;
+        }
+
+        function setCommand(command) {
+            document.getElementById('commandInput').value = command;
+            document.getElementById('commandInput').focus();
+        }
+
+        function handleEnterKey(event) {
+            if (event.key === 'Enter') {
+                executeCommand();
+            }
+        }
+
+        function executeCommand() {
+            if (!selectedAgent) {
+                alert('❌ Vui lòng chọn agent trước');
+                return;
+            }
+
+            const command = document.getElementById('commandInput').value.trim();
+            if (!command) {
+                alert('❌ Vui lòng nhập lệnh');
+                return;
+            }
+
+            const payload = {
+                agent_id: selectedAgent,
+                command: command,
+                type: 'execute'
+            };
+
+            fetch('/api/command', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(payload)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'sent') {
+                    document.getElementById('commandInput').value = '';
+                    showNotification('✅ Lệnh đã được gửi!', 'success');
+                    setTimeout(refreshResults, 1000);
+                } else {
+                    showNotification('❌ ' + (data.error || 'Lỗi không xác định'), 'error');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                showNotification('❌ Lỗi kết nối server', 'error');
+            });
+        }
+
+        function killAllProcesses() {
+            if (!selectedAgent) {
+                alert('❌ Vui lòng chọn agent trước');
+                return;
+            }
+
+            if (!confirm('⚠️ Bạn có chắc muốn dừng TẤT CẢ processes đang chạy?')) {
+                return;
+            }
+
+            const payload = {
+                agent_id: selectedAgent,
+                command: '',
+                type: 'kill_all'
+            };
+
+            fetch('/api/command', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(payload)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'sent') {
+                    showNotification('⛔ Lệnh kill all đã được gửi!', 'warning');
+                    setTimeout(refreshResults, 1000);
+                } else {
+                    showNotification('❌ ' + (data.error || 'Lỗi không xác định'), 'error');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                showNotification('❌ Lỗi kết nối server', 'error');
+            });
+        }
+
+        function refreshResults() {
+            fetch('/api/commands')
+                .then(response => response.json())
+                .then(commands => {
+                    const container = document.getElementById('resultsContainer');
+                    
+                    if (commands.length === 0) {
+                        container.innerHTML = '<p style="text-align: center; color: #666;">Chưa có lệnh nào được thực thi</p>';
+                        return;
+                    }
+
+                    // Sắp xếp theo thời gian mới nhất
+                    commands.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+                    let html = '';
+                    commands.forEach(cmd => {
+                        const statusClass = `status-${cmd.status}`;
+                        const resultClass = cmd.status === 'failed' ? 'failed' : (cmd.status === 'running' ? 'running' : '');
+                        const time = new Date(cmd.created_at).toLocaleString();
+                        
+                        html += `
+                            <div class="command-result ${resultClass}">
+                                <div class="result-header">
+                                    <div>
+                                        <strong>🎯 ${cmd.agent_id.slice(0, 8)}...</strong> - 
+                                        ${cmd.type === 'kill_all' ? '⛔ KILL ALL PROCESSES' : `💻 ${cmd.command}`}
+                                    </div>
+                                    <div>
+                                        <span class="status-badge ${statusClass}">${cmd.status.toUpperCase()}</span>
+                                        <small style="margin-left: 10px;">⏰ ${time}</small>
+                                    </div>
+                                </div>
+                                
+                                ${cmd.output ? `
+                                    <div style="margin: 10px 0;">
+                                        <strong style="color: #00ff00;">📤 Output:</strong>
+                                        <div class="result-output">${escapeHtml(cmd.output)}</div>
+                                    </div>
+                                ` : ''}
+                                
+                                ${cmd.error ? `
+                                    <div style="margin: 10px 0;">
+                                        <strong style="color: #ff0040;">❌ Error:</strong>
+                                        <div class="result-output" style="border-color: #ff0040;">${escapeHtml(cmd.error)}</div>
+                                    </div>
+                                ` : ''}
+                            </div>
+                        `;
+                    });
+                    
+                    container.innerHTML = html;
+                })
+                .catch(error => {
+                    console.error('Error loading results:', error);
+                    document.getElementById('resultsContainer').innerHTML = 
+                        '<p style="color: #ff0040;">❌ Lỗi tải kết quả</p>';
+                });
+        }
+
+        function clearHistory() {
+            if (!confirm('⚠️ Bạn có chắc muốn xóa toàn bộ lịch sử lệnh?')) {
+                return;
+            }
+
+            fetch('/api/clear', {
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'cleared') {
+                    showNotification('🗑️ Đã xóa lịch sử', 'success');
+                    refreshResults();
+                }
+            })
+            .catch(error => {
+                console.error('Error clearing history:', error);
+                showNotification('❌ Lỗi xóa lịch sử', 'error');
+            });
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function showNotification(message, type) {
+            // Tạo thông báo tạm thời
+            const notification = document.createElement('div');
+            notification.style.position = 'fixed';
+            notification.style.top = '20px';
+            notification.style.right = '20px';
+            notification.style.background = type === 'error' ? '#ff0040' : (type === 'warning' ? '#ffaa00' : '#00ff00');
+            notification.style.color = type === 'warning' ? '#000' : '#fff';
+            notification.style.padding = '15px 20px';
+            notification.style.borderRadius = '5px';
+            notification.style.zIndex = '1000';
+            notification.style.boxShadow = '0 0 20px rgba(0,0,0,0.5)';
+            notification.style.fontFamily = 'Consolas, monospace';
+            notification.style.fontWeight = 'bold';
+            notification.textContent = message;
+            
+            document.body.appendChild(notification);
+            
+            setTimeout(() => {
+                if (notification.parentNode) {
+                    notification.parentNode.removeChild(notification);
+                }
+            }, 3000);
+        }
+
+        // Cleanup khi đóng trang
+        window.addEventListener('beforeunload', function() {
+            if (refreshInterval) {
+                clearInterval(refreshInterval);
+            }
+        });
+    </script>
+</body>
+</html>
