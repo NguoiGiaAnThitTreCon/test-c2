@@ -26,8 +26,8 @@
                     {% for agent in agents %}
                     <tr class="border-b">
                         <td class="p-2">{{ agent[0] }}</td>
-                        <td class="p-2">{{ (agent[1] | fromjson).hostname }}</td>
-                        <td class="p-2">{{ (agent[1] | fromjson).platform }}</td>
+                        <td class="p-2">{{ agent[1].hostname }}</td>
+                        <td class="p-2">{{ agent[1].platform }}</td>
                         <td class="p-2">{{ agent[2] }}</td>
                     </tr>
                     {% endfor %}
@@ -84,9 +84,9 @@
                         <td class="p-2">{{ task[0] }}</td>
                         <td class="p-2">{{ task[1] }}</td>
                         <td class="p-2">{{ task[2] }}</td>
-                        <td class="p-2">{{ task[3] | fromjson | tojson }}</td>
+                        <td class="p-2">{{ task[3] }}</td>
                         <td class="p-2">{{ task[4] }}</td>
-                        <td class="p-2">{{ task[5] | fromjson | tojson }}</td>
+                        <td class="p-2">{{ task[5] }}</td>
                         <td class="p-2">{{ task[6] }}</td>
                     </tr>
                     {% endfor %}
